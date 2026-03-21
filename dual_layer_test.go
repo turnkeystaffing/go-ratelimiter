@@ -86,7 +86,7 @@ func TestDualLayerRateLimiter_Check(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			baseLimiter := NewRateLimiter()
-			defer baseLimiter.Stop()
+			defer baseLimiter.Close()
 			if tt.setup != nil {
 				tt.setup(baseLimiter)
 			}
@@ -111,7 +111,7 @@ func TestDualLayerRateLimiter_ClientLimitExceeded(t *testing.T) {
 	}
 
 	baseLimiter := NewRateLimiter()
-	defer baseLimiter.Stop()
+	defer baseLimiter.Close()
 	limiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth", testNopLogger())
 
 	for i := 0; i < 3; i++ {
@@ -150,7 +150,7 @@ func TestDualLayerRateLimiter_IPLimitExceeded(t *testing.T) {
 	}
 
 	baseLimiter := NewRateLimiter()
-	defer baseLimiter.Stop()
+	defer baseLimiter.Close()
 	limiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth", testNopLogger())
 
 	for i := 0; i < 3; i++ {
@@ -187,7 +187,7 @@ func TestDualLayerRateLimiter_CheckWithDetails(t *testing.T) {
 	}
 
 	baseLimiter := NewRateLimiter()
-	defer baseLimiter.Stop()
+	defer baseLimiter.Close()
 	limiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth", testNopLogger())
 
 	result := limiter.CheckWithDetails(context.Background(), "authorize", "client-123", "192.168.1.1")
@@ -224,7 +224,7 @@ func TestDualLayerRateLimiter_CheckWithDetails(t *testing.T) {
 func TestDualLayerRateLimiter_PublicEndpoint(t *testing.T) {
 	config := testOAuthConfig()
 	baseLimiter := NewRateLimiter()
-	defer baseLimiter.Stop()
+	defer baseLimiter.Close()
 	limiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth", testNopLogger())
 
 	for i := 0; i < 50; i++ {
@@ -258,7 +258,7 @@ func TestDualLayerRateLimiter_GetStatus(t *testing.T) {
 	}
 
 	baseLimiter := NewRateLimiter()
-	defer baseLimiter.Stop()
+	defer baseLimiter.Close()
 	limiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth", testNopLogger())
 
 	for i := 0; i < 5; i++ {
@@ -287,7 +287,7 @@ func TestDualLayerRateLimiter_IsEnabled(t *testing.T) {
 	disabledConfig := &DualLayerConfig{Enabled: false}
 
 	baseLimiter := NewRateLimiter()
-	defer baseLimiter.Stop()
+	defer baseLimiter.Close()
 
 	enabledLimiter := NewDualLayerRateLimiter(baseLimiter, enabledConfig, "oauth", testNopLogger())
 	if !enabledLimiter.IsEnabled() {
@@ -310,7 +310,7 @@ func TestDualLayerRateLimiter_DifferentPrefixes(t *testing.T) {
 	}
 
 	baseLimiter := NewRateLimiter()
-	defer baseLimiter.Stop()
+	defer baseLimiter.Close()
 	oauthLimiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth", testNopLogger())
 	bffLimiter := NewDualLayerRateLimiter(baseLimiter, config, "bff", testNopLogger())
 
@@ -385,7 +385,7 @@ func (l *infraErrorLimiter) GetBucketStatus(_ context.Context, _ string, _ strin
 func TestDualLayerRateLimiter_GetConfig(t *testing.T) {
 	config := testOAuthConfig()
 	baseLimiter := NewRateLimiter()
-	defer baseLimiter.Stop()
+	defer baseLimiter.Close()
 	limiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth", testNopLogger())
 
 	got := limiter.GetConfig()
@@ -449,7 +449,7 @@ func TestDualLayerRateLimiter_InfraError_IPPath(t *testing.T) {
 func TestDualLayerRateLimiter_CheckWithDetails_Disabled(t *testing.T) {
 	config := &DualLayerConfig{Enabled: false}
 	baseLimiter := NewRateLimiter()
-	defer baseLimiter.Stop()
+	defer baseLimiter.Close()
 	limiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth", testNopLogger())
 
 	result := limiter.CheckWithDetails(context.Background(), "token", "client-123", "192.168.1.1")

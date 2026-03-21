@@ -25,7 +25,7 @@ func TestNewRateLimiterDecorator_NilRateLimiterWhenDisabled_NoPanic(t *testing.T
 
 func TestRateLimiterDecorator_CheckRateLimit_Delegates(t *testing.T) {
 	rl := NewRateLimiter()
-	defer rl.Stop()
+	defer rl.Close()
 	d := NewRateLimiterDecorator(rl, true, "login", 2, time.Minute)
 
 	err := d.CheckRateLimit(context.Background(), "user-1")
@@ -54,7 +54,7 @@ func TestRateLimiterDecorator_DisabledMode_AlwaysAllows(t *testing.T) {
 
 func TestRateLimiterDecorator_GetBucketStatus(t *testing.T) {
 	rl := NewRateLimiter()
-	defer rl.Stop()
+	defer rl.Close()
 	d := NewRateLimiterDecorator(rl, true, "login", 5, time.Minute)
 
 	// Before any calls

@@ -29,7 +29,7 @@ go get github.com/turnkeystaffing/go-ratelimiter
 
 ```go
 rl := ratelimiter.NewRateLimiter()
-defer rl.Stop()
+defer rl.Close()
 
 err := rl.CheckRateLimit(ctx, "user-123", "login", 5, time.Minute)
 if err != nil {

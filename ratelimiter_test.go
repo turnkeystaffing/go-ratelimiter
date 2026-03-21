@@ -12,7 +12,7 @@ import (
 
 func TestNewRateLimiter(t *testing.T) {
 	rl := NewRateLimiter()
-	defer rl.Stop()
+	defer rl.Close()
 	assert.NotNil(t, rl)
 	assert.NotNil(t, rl.buckets)
 	assert.Equal(t, 0, len(rl.buckets))
@@ -20,7 +20,7 @@ func TestNewRateLimiter(t *testing.T) {
 
 func TestRateLimiter_CheckRateLimit_NewUser(t *testing.T) {
 	rl := NewRateLimiter()
-	defer rl.Stop()
+	defer rl.Close()
 	key := "user-abc-123"
 	action := "test_action"
 	limit := 5
@@ -42,7 +42,7 @@ func TestRateLimiter_CheckRateLimit_NewUser(t *testing.T) {
 
 func TestRateLimiter_CheckRateLimit_WithinLimit(t *testing.T) {
 	rl := NewRateLimiter()
-	defer rl.Stop()
+	defer rl.Close()
 	key := "user-abc-123"
 	action := "test_action"
 	limit := 3
@@ -63,7 +63,7 @@ func TestRateLimiter_CheckRateLimit_WithinLimit(t *testing.T) {
 
 func TestRateLimiter_CheckRateLimit_ExceedsLimit(t *testing.T) {
 	rl := NewRateLimiter()
-	defer rl.Stop()
+	defer rl.Close()
 	key := "user-abc-123"
 	action := "login"
 	limit := 2
@@ -84,7 +84,7 @@ func TestRateLimiter_CheckRateLimit_ExceedsLimit(t *testing.T) {
 
 func TestRateLimiter_CheckRateLimit_TokenRefill(t *testing.T) {
 	rl := NewRateLimiter()
-	defer rl.Stop()
+	defer rl.Close()
 	key := "user-abc-123"
 	action := "test_action"
 	limit := 2
@@ -107,7 +107,7 @@ func TestRateLimiter_CheckRateLimit_TokenRefill(t *testing.T) {
 
 func TestRateLimiter_CheckRateLimit_DifferentUsers(t *testing.T) {
 	rl := NewRateLimiter()
-	defer rl.Stop()
+	defer rl.Close()
 	user1 := "user-1"
 	user2 := "user-2"
 	action := "test_action"
@@ -126,7 +126,7 @@ func TestRateLimiter_CheckRateLimit_DifferentUsers(t *testing.T) {
 
 func TestRateLimiter_CheckRateLimit_DifferentActions(t *testing.T) {
 	rl := NewRateLimiter()
-	defer rl.Stop()
+	defer rl.Close()
 	key := "user-abc-123"
 	action1 := "login"
 	action2 := "password_reset"
@@ -145,7 +145,7 @@ func TestRateLimiter_CheckRateLimit_DifferentActions(t *testing.T) {
 
 func TestRateLimiter_CheckRateLimit_RetryAfterComputation(t *testing.T) {
 	rl := NewRateLimiter()
-	defer rl.Stop()
+	defer rl.Close()
 	key := "user-retry"
 	action := "test"
 	limit := 1
@@ -165,7 +165,7 @@ func TestRateLimiter_CheckRateLimit_RetryAfterComputation(t *testing.T) {
 
 func TestRateLimiter_GetBucketStatus_ExistingBucket(t *testing.T) {
 	rl := NewRateLimiter()
-	defer rl.Stop()
+	defer rl.Close()
 	key := "user-abc-123"
 	action := "test_action"
 	limit := 5
@@ -182,7 +182,7 @@ func TestRateLimiter_GetBucketStatus_ExistingBucket(t *testing.T) {
 
 func TestRateLimiter_GetBucketStatus_NonExistentBucket(t *testing.T) {
 	rl := NewRateLimiter()
-	defer rl.Stop()
+	defer rl.Close()
 	key := "user-abc-123"
 	action := "nonexistent_action"
 
@@ -194,7 +194,7 @@ func TestRateLimiter_GetBucketStatus_NonExistentBucket(t *testing.T) {
 
 func TestRateLimiter_GetBucketStatus_AfterRefill(t *testing.T) {
 	rl := NewRateLimiter()
-	defer rl.Stop()
+	defer rl.Close()
 	key := "user-abc-123"
 	action := "test_action"
 	limit := 3
@@ -219,7 +219,7 @@ func TestRateLimiter_GetBucketStatus_AfterRefill(t *testing.T) {
 
 func TestRateLimiter_ConcurrentAccess(t *testing.T) {
 	rl := NewRateLimiter()
-	defer rl.Stop()
+	defer rl.Close()
 	key := "user-concurrent"
 	action := "concurrent_test"
 	limit := 10
@@ -256,7 +256,7 @@ func TestRateLimiter_ConcurrentAccess(t *testing.T) {
 
 func TestRateLimiter_Cleanup(t *testing.T) {
 	rl := NewRateLimiter()
-	defer rl.Stop()
+	defer rl.Close()
 	key := "user-cleanup"
 	action := "cleanup_test"
 	limit := 5
@@ -285,7 +285,7 @@ func TestRateLimiter_Cleanup(t *testing.T) {
 func TestRateLimiter_EdgeCases(t *testing.T) {
 	t.Run("zero limit", func(t *testing.T) {
 		rl := NewRateLimiter()
-		defer rl.Stop()
+		defer rl.Close()
 		key := "user-zero"
 		action := "zero_limit"
 		limit := 0
@@ -307,7 +307,7 @@ func TestRateLimiter_EdgeCases(t *testing.T) {
 
 	t.Run("very short window", func(t *testing.T) {
 		rl := NewRateLimiter()
-		defer rl.Stop()
+		defer rl.Close()
 		key := "user-short"
 		action := "short_window"
 		limit := 2
@@ -324,7 +324,7 @@ func TestRateLimiter_EdgeCases(t *testing.T) {
 
 	t.Run("very long window", func(t *testing.T) {
 		rl := NewRateLimiter()
-		defer rl.Stop()
+		defer rl.Close()
 		key := "user-long"
 		action := "long_window"
 		limit := 2
@@ -341,17 +341,17 @@ func TestRateLimiter_EdgeCases(t *testing.T) {
 	})
 }
 
-func TestRateLimiter_Stop(t *testing.T) {
+func TestRateLimiter_Close(t *testing.T) {
 	rl := NewRateLimiter()
 
 	// Use the limiter
 	err := rl.CheckRateLimit(context.Background(), "key", "action", 5, time.Minute)
 	assert.NoError(t, err)
 
-	// Stop should not panic
-	rl.Stop()
+	// Close should not panic
+	assert.NoError(t, rl.Close())
 
-	// Limiter should still be usable for reads after Stop (cleanup goroutine stopped, but data intact)
+	// Limiter should still be usable for reads after Close (cleanup goroutine stopped, but data intact)
 	count, max, _ := rl.GetBucketStatus(context.Background(), "key", "action")
 	assert.Equal(t, 4, count)
 	assert.Equal(t, 5, max)
@@ -359,7 +359,7 @@ func TestRateLimiter_Stop(t *testing.T) {
 
 func TestRateLimiter_Interface_Compliance(t *testing.T) {
 	concreteRL := NewRateLimiter()
-	defer concreteRL.Stop()
+	defer concreteRL.Close()
 	var rl RateLimiterInterface = concreteRL
 	assert.NotNil(t, rl)
 
@@ -378,7 +378,7 @@ func TestRateLimiter_Interface_Compliance(t *testing.T) {
 // Benchmark tests
 func BenchmarkRateLimiter_CheckRateLimit(b *testing.B) {
 	rl := NewRateLimiter()
-	defer rl.Stop()
+	defer rl.Close()
 	key := "user-bench"
 	action := "benchmark"
 	limit := 1000000
@@ -394,7 +394,7 @@ func BenchmarkRateLimiter_CheckRateLimit(b *testing.B) {
 
 func BenchmarkRateLimiter_GetBucketStatus(b *testing.B) {
 	rl := NewRateLimiter()
-	defer rl.Stop()
+	defer rl.Close()
 	key := "user-bench"
 	action := "benchmark"
 	limit := 1000
@@ -412,7 +412,7 @@ func BenchmarkRateLimiter_GetBucketStatus(b *testing.B) {
 
 func BenchmarkRateLimiter_ConcurrentDifferentUsers(b *testing.B) {
 	rl := NewRateLimiter()
-	defer rl.Stop()
+	defer rl.Close()
 	action := "benchmark"
 	limit := 1000
 	window := time.Hour
