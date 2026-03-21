@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"sync/atomic"
 	"time"
+
+	pkgredis "github.com/turnkeystaffing/go-redis"
 )
 
 // FallbackRateLimiter wraps a primary (e.g., Redis) and fallback (e.g., in-memory) rate limiter.
@@ -16,7 +18,7 @@ import (
 type FallbackRateLimiter struct {
 	primary          RateLimiterInterface
 	fallback         RateLimiterInterface
-	monitor          *DegradationMonitor
+	monitor          pkgredis.DegradationMonitor
 	logger           *slog.Logger
 	failureThreshold int32
 	failureCount     atomic.Int32
@@ -28,7 +30,7 @@ type FallbackRateLimiter struct {
 func NewFallbackRateLimiter(
 	primary RateLimiterInterface,
 	fallback RateLimiterInterface,
-	monitor *DegradationMonitor,
+	monitor pkgredis.DegradationMonitor,
 	logger *slog.Logger,
 	failureThreshold int,
 ) *FallbackRateLimiter {

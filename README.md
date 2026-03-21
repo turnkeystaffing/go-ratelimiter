@@ -51,14 +51,15 @@ err = rl.CheckRateLimit(ctx, "user-123", "login", 5, time.Minute)
 ### Fallback Rate Limiter (Redis with In-Memory Fallback)
 
 ```go
-monitor := ratelimiter.NewDegradationMonitor(recoveryCheckFn, 30*time.Second, logger)
-defer monitor.Stop()
+// Use the shared go-redis HealthMonitor (shared across all Redis consumers)
+monitor := goredis.NewHealthMonitor(redisClient, logger, goredis.HealthMonitorConfig{})
+defer monitor.Close()
 
 fl := ratelimiter.NewFallbackRateLimiter(redisLimiter, memoryLimiter, monitor, logger, 3)
 err := fl.CheckRateLimit(ctx, "user-123", "login", 5, time.Minute)
 ```
 
-After 3 consecutive Redis infrastructure errors, the limiter degrades to in-memory. The monitor periodically probes Redis and restores the primary when healthy.
+After 3 consecutive Redis infrastructure errors, the limiter degrades to in-memory. The shared monitor's background probe pings Redis and restores the primary when healthy.
 
 ### Decorator (Pre-Configured Limits)
 

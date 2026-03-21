@@ -30,15 +30,23 @@ func (m *mockLimiter) calls() int32 {
 	return atomic.LoadInt32(&m.checkCall)
 }
 
-func newAlwaysHealthyMonitor() *DegradationMonitor {
-	return NewDegradationMonitor(func() bool { return true }, time.Hour, testNopLogger())
+// mockMonitor is a minimal pkgredis.DegradationMonitor for tests.
+type mockMonitor struct {
+	degraded atomic.Bool
+}
+
+func (m *mockMonitor) IsDegraded() bool { return m.degraded.Load() }
+func (m *mockMonitor) MarkDegraded()    { m.degraded.Store(true) }
+func (m *mockMonitor) MarkHealthy()     { m.degraded.Store(false) }
+
+func newAlwaysHealthyMonitor() *mockMonitor {
+	return &mockMonitor{}
 }
 
 func TestFallbackRateLimiter_PrimaryReturnsRateLimited(t *testing.T) {
 	primary := &mockLimiter{checkErr: &ErrRateLimited{RetryAfter: 30 * time.Second, Limit: 10}}
 	fallback := &mockLimiter{}
 	monitor := newAlwaysHealthyMonitor()
-	defer monitor.Stop()
 
 	fb := NewFallbackRateLimiter(primary, fallback, monitor, testNopLogger(), 1)
 
@@ -61,7 +69,6 @@ func TestFallbackRateLimiter_PrimaryReturnsInfrastructureError(t *testing.T) {
 	primary := &mockLimiter{checkErr: &ErrInfrastructure{Cause: errRedis}}
 	fallback := &mockLimiter{} // returns nil
 	monitor := newAlwaysHealthyMonitor()
-	defer monitor.Stop()
 
 	fb := NewFallbackRateLimiter(primary, fallback, monitor, testNopLogger(), 1)
 
@@ -79,7 +86,6 @@ func TestFallbackRateLimiter_PrimaryReturnsGenericError(t *testing.T) {
 	primary := &mockLimiter{checkErr: errors.New("connection timeout")}
 	fallback := &mockLimiter{}
 	monitor := newAlwaysHealthyMonitor()
-	defer monitor.Stop()
 
 	fb := NewFallbackRateLimiter(primary, fallback, monitor, testNopLogger(), 1)
 
@@ -94,7 +100,7 @@ func TestFallbackRateLimiter_DegradedModeSkipsPrimary(t *testing.T) {
 	primary := &mockLimiter{checkErr: &ErrInfrastructure{Cause: errRedis}}
 	fallback := &mockLimiter{}
 	monitor := newAlwaysHealthyMonitor()
-	defer monitor.Stop()
+
 	monitor.MarkDegraded()
 
 	fb := NewFallbackRateLimiter(primary, fallback, monitor, testNopLogger(), 1)
@@ -109,13 +115,9 @@ func TestFallbackRateLimiter_DegradedModeSkipsPrimary(t *testing.T) {
 }
 
 func TestFallbackRateLimiter_RecoveryRestoresPrimary(t *testing.T) {
-	healthy := atomic.Bool{}
-	healthy.Store(false)
-
 	primary := &mockLimiter{} // returns nil (healthy)
 	fallback := &mockLimiter{}
-	monitor := NewDegradationMonitor(func() bool { return healthy.Load() }, 10*time.Millisecond, testNopLogger())
-	defer monitor.Stop()
+	monitor := newAlwaysHealthyMonitor()
 	monitor.MarkDegraded()
 
 	fb := NewFallbackRateLimiter(primary, fallback, monitor, testNopLogger(), 1)
@@ -126,11 +128,8 @@ func TestFallbackRateLimiter_RecoveryRestoresPrimary(t *testing.T) {
 	assert.Equal(t, int32(0), primary.calls())
 	assert.Equal(t, int32(1), fallback.calls())
 
-	// Signal recovery
-	healthy.Store(true)
-	// Wait for recovery check to fire
-	time.Sleep(50 * time.Millisecond)
-
+	// Simulate recovery (e.g., go-redis HealthMonitor probe succeeds)
+	monitor.MarkHealthy()
 	assert.False(t, monitor.IsDegraded())
 
 	// Now primary should be used again
@@ -143,7 +142,6 @@ func TestFallbackRateLimiter_FallbackReturnsRateLimited(t *testing.T) {
 	primary := &mockLimiter{checkErr: &ErrInfrastructure{Cause: errRedis}}
 	fallback := &mockLimiter{checkErr: &ErrRateLimited{RetryAfter: 10 * time.Second, Limit: 5}}
 	monitor := newAlwaysHealthyMonitor()
-	defer monitor.Stop()
 
 	fb := NewFallbackRateLimiter(primary, fallback, monitor, testNopLogger(), 1)
 
@@ -159,7 +157,6 @@ func TestFallbackRateLimiter_PrimarySuccess(t *testing.T) {
 	primary := &mockLimiter{} // nil error = success
 	fallback := &mockLimiter{}
 	monitor := newAlwaysHealthyMonitor()
-	defer monitor.Stop()
 
 	fb := NewFallbackRateLimiter(primary, fallback, monitor, testNopLogger(), 1)
 
@@ -176,7 +173,6 @@ func TestFallbackRateLimiter_GetBucketStatus_Delegation(t *testing.T) {
 	primary := &statusMockLimiter{count: 5, max: 10, resetAt: now}
 	fallback := &statusMockLimiter{count: 2, max: 10, resetAt: now.Add(time.Minute)}
 	monitor := newAlwaysHealthyMonitor()
-	defer monitor.Stop()
 
 	fb := NewFallbackRateLimiter(primary, fallback, monitor, testNopLogger(), 1)
 
@@ -201,7 +197,6 @@ func TestFallbackRateLimiter_ThresholdRequiresConsecutiveFailures(t *testing.T) 
 	primary := &mockLimiter{checkErr: &ErrInfrastructure{Cause: errRedis}}
 	fallback := &mockLimiter{}
 	monitor := newAlwaysHealthyMonitor()
-	defer monitor.Stop()
 
 	// Threshold of 3: need 3 consecutive failures to degrade
 	fb := NewFallbackRateLimiter(primary, fallback, monitor, testNopLogger(), 3)
@@ -239,7 +234,6 @@ func TestFallbackRateLimiter_SuccessResetsFailureCount(t *testing.T) {
 	}
 	fallback := &mockLimiter{}
 	monitor := newAlwaysHealthyMonitor()
-	defer monitor.Stop()
 
 	fb := NewFallbackRateLimiter(primary, fallback, monitor, testNopLogger(), 3)
 

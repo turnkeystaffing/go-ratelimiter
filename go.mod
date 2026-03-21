@@ -6,7 +6,7 @@ require (
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/stretchr/testify v1.11.1
 	github.com/turnkeystaffing/go-health v0.1.1
-	github.com/turnkeystaffing/go-redis v0.1.0
+	github.com/turnkeystaffing/go-redis v0.2.0
 )
 
 require (
