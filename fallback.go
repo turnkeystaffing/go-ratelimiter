@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"sync/atomic"
 	"time"
@@ -101,3 +102,21 @@ func (f *FallbackRateLimiter) GetBucketStatus(ctx context.Context, key string, a
 	}
 	return f.primary.GetBucketStatus(ctx, key, action)
 }
+
+// IsDegraded returns true when the fallback (in-memory) limiter is active.
+func (f *FallbackRateLimiter) IsDegraded() bool {
+	return f.monitor.IsDegraded()
+}
+
+// Close closes both limiters if they implement io.Closer.
+func (f *FallbackRateLimiter) Close() error {
+	if c, ok := f.primary.(interface{ Close() error }); ok {
+		_ = c.Close()
+	}
+	if c, ok := f.fallback.(interface{ Close() error }); ok {
+		_ = c.Close()
+	}
+	return nil
+}
+
+var _ io.Closer = (*FallbackRateLimiter)(nil)
