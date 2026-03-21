@@ -1,6 +1,7 @@
 package ratelimiter
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"time"
@@ -20,19 +21,24 @@ type Config struct {
 	DefaultWindow         time.Duration
 }
 
-// NewRateLimiterFromRedis creates a Redis-based distributed rate limiter.
-// Returns error on nil client.
+// NewRateLimiterFromRedis creates a Redis-based distributed rate limiter
 func NewRateLimiterFromRedis(redisClient redisclient.RedisClient, logger *slog.Logger) (RateLimiterInterface, error) {
 	if redisClient == nil {
-		return nil, fmt.Errorf("redis client is required for distributed rate limiting")
+		panic("NewRateLimiterFromRedis: redisClient cannot be nil")
 	}
-	logger.Info("Initializing Redis-based distributed rate limiter")
+	if logger == nil {
+		panic("NewRateLimiterFromRedis: logger cannot be nil")
+	}
+	logger.InfoContext(context.Background(), "Initializing Redis-based distributed rate limiter")
 	return NewRedisRateLimiter(redisClient, logger), nil
 }
 
 // NewRateLimiterFromMemory creates an in-memory rate limiter (not suitable for distributed deployments)
 func NewRateLimiterFromMemory(logger *slog.Logger) RateLimiterInterface {
-	logger.Warn("Using in-memory rate limiter - not suitable for distributed deployments")
+	if logger == nil {
+		panic("NewRateLimiterFromMemory: logger cannot be nil")
+	}
+	logger.WarnContext(context.Background(), "Using in-memory rate limiter - not suitable for distributed deployments")
 	return NewRateLimiter()
 }
 
@@ -85,7 +91,13 @@ func createRateLimiterDecorator(
 	window time.Duration,
 	logFields ...any,
 ) (*RateLimiterDecorator, error) {
-	logger.Info("Initializing "+bucketType+" rate limiter", logFields...)
+	if logger == nil {
+		panic("createRateLimiterDecorator: logger cannot be nil")
+	}
+	if cfg == nil {
+		panic("createRateLimiterDecorator: cfg cannot be nil")
+	}
+	logger.InfoContext(context.Background(), fmt.Sprintf("Initializing %s rate limiter", bucketType), logFields...)
 
 	// Fallback to defaults if not set
 	if limit <= 0 {

@@ -3,17 +3,16 @@ package ratelimiter
 import (
 	"context"
 	"fmt"
-	"io"
 	"sync"
 	"time"
 )
 
 // RateLimiter provides rate limiting functionality
 type RateLimiter struct {
-	buckets     map[string]*bucket
-	mutex       sync.RWMutex
-	stopCleanup chan struct{}
-	closeOnce   sync.Once
+	buckets  map[string]*bucket
+	mutex    sync.RWMutex
+	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 // bucket represents a rate limiting bucket for a specific key
@@ -27,8 +26,8 @@ type bucket struct {
 // NewRateLimiter creates a new in-memory rate limiter
 func NewRateLimiter() *RateLimiter {
 	rl := &RateLimiter{
-		buckets:     make(map[string]*bucket),
-		stopCleanup: make(chan struct{}),
+		buckets: make(map[string]*bucket),
+		stopCh:  make(chan struct{}),
 	}
 
 	// Start cleanup goroutine
@@ -37,9 +36,16 @@ func NewRateLimiter() *RateLimiter {
 	return rl
 }
 
+// Stop stops the background cleanup goroutine. Safe to call multiple times.
+func (rl *RateLimiter) Stop() {
+	rl.stopOnce.Do(func() {
+		close(rl.stopCh)
+	})
+}
+
 // CheckRateLimit checks if an action is allowed under the rate limit
 func (rl *RateLimiter) CheckRateLimit(_ context.Context, key string, action string, limit int, window time.Duration) error {
-	bucketKey := fmt.Sprintf("%s:%s", key, action)
+	bucketKey := fmt.Sprintf("%s:%s", sanitizeKeySegment(key), sanitizeKeySegment(action))
 
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
@@ -64,7 +70,11 @@ func (rl *RateLimiter) CheckRateLimit(_ context.Context, key string, action stri
 
 	// Check if we have tokens available
 	if b.tokens <= 0 {
-		return ErrRateLimitExceeded
+		retryAfter := b.window - time.Since(b.lastRefill)
+		if retryAfter < 0 {
+			retryAfter = b.window
+		}
+		return &ErrRateLimited{RetryAfter: retryAfter, Limit: limit}
 	}
 
 	// Consume a token
@@ -80,16 +90,6 @@ func (rl *RateLimiter) refillBucket(b *bucket, now time.Time) {
 		b.tokens = b.maxTokens
 		b.lastRefill = now
 	}
-	// For sliding window behavior, we could implement partial refills here
-	// For now, we use a simple fixed window approach
-}
-
-// Close stops the cleanup goroutine. Safe to call multiple times.
-func (rl *RateLimiter) Close() error {
-	rl.closeOnce.Do(func() {
-		close(rl.stopCleanup)
-	})
-	return nil
 }
 
 // cleanup removes old buckets to prevent memory leaks
@@ -99,7 +99,7 @@ func (rl *RateLimiter) cleanup() {
 
 	for {
 		select {
-		case <-rl.stopCleanup:
+		case <-rl.stopCh:
 			return
 		case <-ticker.C:
 			rl.mutex.Lock()
@@ -119,7 +119,7 @@ func (rl *RateLimiter) cleanup() {
 
 // GetBucketStatus returns the current status of a rate limit bucket for debugging
 func (rl *RateLimiter) GetBucketStatus(_ context.Context, key string, action string) (int, int, time.Time) {
-	bucketKey := fmt.Sprintf("%s:%s", key, action)
+	bucketKey := fmt.Sprintf("%s:%s", sanitizeKeySegment(key), sanitizeKeySegment(action))
 
 	rl.mutex.RLock()
 	defer rl.mutex.RUnlock()
@@ -131,5 +131,3 @@ func (rl *RateLimiter) GetBucketStatus(_ context.Context, key string, action str
 
 	return b.tokens, b.maxTokens, b.lastRefill
 }
-
-var _ io.Closer = (*RateLimiter)(nil)

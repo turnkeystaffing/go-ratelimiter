@@ -8,7 +8,6 @@ import (
 )
 
 // testOAuthConfig returns a test OAuth rate limit configuration.
-// Mirrors the defaults from internal/bff/config/ratelimit.go.
 func testOAuthConfig() *DualLayerConfig {
 	return &DualLayerConfig{
 		Enabled: true,
@@ -25,7 +24,6 @@ func testOAuthConfig() *DualLayerConfig {
 }
 
 // testBFFConfig returns a test BFF rate limit configuration.
-// Mirrors the defaults from internal/bff/config/ratelimit.go.
 func testBFFConfig() *DualLayerConfig {
 	return &DualLayerConfig{
 		Enabled: true,
@@ -48,7 +46,7 @@ func TestDualLayerRateLimiter_Check(t *testing.T) {
 		clientID  string
 		ipAddress string
 		config    *DualLayerConfig
-		setup     func(*RateLimiter) // Pre-populate rate limiter
+		setup     func(*RateLimiter)
 		wantErr   bool
 	}{
 		{
@@ -88,11 +86,12 @@ func TestDualLayerRateLimiter_Check(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			baseLimiter := NewRateLimiter()
+			defer baseLimiter.Stop()
 			if tt.setup != nil {
 				tt.setup(baseLimiter)
 			}
 
-			limiter := NewDualLayerRateLimiter(baseLimiter, tt.config, "oauth")
+			limiter := NewDualLayerRateLimiter(baseLimiter, tt.config, "oauth", testNopLogger())
 			err := limiter.Check(context.Background(), tt.endpoint, tt.clientID, tt.ipAddress)
 
 			if (err != nil) != tt.wantErr {
@@ -107,14 +106,14 @@ func TestDualLayerRateLimiter_ClientLimitExceeded(t *testing.T) {
 		Enabled: true,
 		Window:  time.Minute,
 		Endpoints: map[string]EndpointLimit{
-			"authorize": {ClientLimit: 3, IPLimit: 100}, // Low client limit for testing
+			"authorize": {ClientLimit: 3, IPLimit: 100},
 		},
 	}
 
 	baseLimiter := NewRateLimiter()
-	limiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth")
+	defer baseLimiter.Stop()
+	limiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth", testNopLogger())
 
-	// Make requests up to the client limit
 	for i := 0; i < 3; i++ {
 		err := limiter.Check(context.Background(), "authorize", "client-123", "192.168.1.1")
 		if err != nil {
@@ -122,13 +121,19 @@ func TestDualLayerRateLimiter_ClientLimitExceeded(t *testing.T) {
 		}
 	}
 
-	// Next request should be blocked (client limit exceeded)
 	err := limiter.Check(context.Background(), "authorize", "client-123", "192.168.1.1")
-	if !errors.Is(err, ErrRateLimitExceeded) {
-		t.Errorf("Expected ErrRateLimitExceeded, got %v", err)
+	var rateLimitErr *ErrRateLimited
+	if !errors.As(err, &rateLimitErr) {
+		t.Errorf("Expected *ErrRateLimited, got %v", err)
+	} else {
+		if rateLimitErr.Limit != 3 {
+			t.Errorf("Expected Limit=3, got %d", rateLimitErr.Limit)
+		}
+		if rateLimitErr.RetryAfter <= 0 {
+			t.Error("Expected positive RetryAfter")
+		}
 	}
 
-	// Different client should still be allowed
 	err = limiter.Check(context.Background(), "authorize", "client-456", "192.168.1.1")
 	if err != nil {
 		t.Errorf("Different client should be allowed: %v", err)
@@ -140,14 +145,14 @@ func TestDualLayerRateLimiter_IPLimitExceeded(t *testing.T) {
 		Enabled: true,
 		Window:  time.Minute,
 		Endpoints: map[string]EndpointLimit{
-			"token": {ClientLimit: 100, IPLimit: 3}, // Low IP limit for testing
+			"token": {ClientLimit: 100, IPLimit: 3},
 		},
 	}
 
 	baseLimiter := NewRateLimiter()
-	limiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth")
+	defer baseLimiter.Stop()
+	limiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth", testNopLogger())
 
-	// Make requests up to the IP limit (different clients, same IP)
 	for i := 0; i < 3; i++ {
 		clientID := "client-" + string(rune('a'+i))
 		err := limiter.Check(context.Background(), "token", clientID, "192.168.1.1")
@@ -156,13 +161,16 @@ func TestDualLayerRateLimiter_IPLimitExceeded(t *testing.T) {
 		}
 	}
 
-	// Next request from same IP should be blocked
 	err := limiter.Check(context.Background(), "token", "client-d", "192.168.1.1")
-	if !errors.Is(err, ErrRateLimitExceeded) {
-		t.Errorf("Expected ErrRateLimitExceeded, got %v", err)
+	var rateLimitErr *ErrRateLimited
+	if !errors.As(err, &rateLimitErr) {
+		t.Errorf("Expected *ErrRateLimited, got %v", err)
+	} else {
+		if rateLimitErr.Limit != 3 {
+			t.Errorf("Expected Limit=3, got %d", rateLimitErr.Limit)
+		}
 	}
 
-	// Different IP should still be allowed
 	err = limiter.Check(context.Background(), "token", "client-d", "10.0.0.1")
 	if err != nil {
 		t.Errorf("Different IP should be allowed: %v", err)
@@ -179,9 +187,9 @@ func TestDualLayerRateLimiter_CheckWithDetails(t *testing.T) {
 	}
 
 	baseLimiter := NewRateLimiter()
-	limiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth")
+	defer baseLimiter.Stop()
+	limiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth", testNopLogger())
 
-	// First request
 	result := limiter.CheckWithDetails(context.Background(), "authorize", "client-123", "192.168.1.1")
 	if !result.Allowed {
 		t.Error("First request should be allowed")
@@ -193,7 +201,6 @@ func TestDualLayerRateLimiter_CheckWithDetails(t *testing.T) {
 		t.Errorf("IPLimit = %d, want 5", result.IPLimit)
 	}
 
-	// Second request
 	result = limiter.CheckWithDetails(context.Background(), "authorize", "client-123", "192.168.1.1")
 	if !result.Allowed {
 		t.Error("Second request should be allowed")
@@ -202,7 +209,6 @@ func TestDualLayerRateLimiter_CheckWithDetails(t *testing.T) {
 		t.Errorf("ClientCount = %d, want 2", result.ClientCount)
 	}
 
-	// Third request should exceed client limit
 	result = limiter.CheckWithDetails(context.Background(), "authorize", "client-123", "192.168.1.1")
 	if result.Allowed {
 		t.Error("Third request should be denied")
@@ -218,9 +224,9 @@ func TestDualLayerRateLimiter_CheckWithDetails(t *testing.T) {
 func TestDualLayerRateLimiter_PublicEndpoint(t *testing.T) {
 	config := testOAuthConfig()
 	baseLimiter := NewRateLimiter()
-	limiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth")
+	defer baseLimiter.Stop()
+	limiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth", testNopLogger())
 
-	// Discovery endpoint should skip client check (ClientLimit = 0)
 	for i := 0; i < 50; i++ {
 		err := limiter.Check(context.Background(), "discovery", "", "192.168.1.1")
 		if err != nil {
@@ -228,11 +234,11 @@ func TestDualLayerRateLimiter_PublicEndpoint(t *testing.T) {
 		}
 	}
 
-	// Should eventually hit IP limit (100/min)
 	var hitLimit bool
 	for i := 50; i < 150; i++ {
 		err := limiter.Check(context.Background(), "discovery", "", "192.168.1.1")
-		if errors.Is(err, ErrRateLimitExceeded) {
+		var rateLimitErr *ErrRateLimited
+		if errors.As(err, &rateLimitErr) {
 			hitLimit = true
 			break
 		}
@@ -252,14 +258,13 @@ func TestDualLayerRateLimiter_GetStatus(t *testing.T) {
 	}
 
 	baseLimiter := NewRateLimiter()
-	limiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth")
+	defer baseLimiter.Stop()
+	limiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth", testNopLogger())
 
-	// Make some requests
 	for i := 0; i < 5; i++ {
 		_ = limiter.Check(context.Background(), "token", "client-123", "192.168.1.1")
 	}
 
-	// Check status (should not increment counters)
 	status := limiter.GetStatus(context.Background(), "token", "client-123", "192.168.1.1")
 	if status.ClientCount != 5 {
 		t.Errorf("ClientCount = %d, want 5", status.ClientCount)
@@ -271,7 +276,6 @@ func TestDualLayerRateLimiter_GetStatus(t *testing.T) {
 		t.Error("Status should show allowed (under limits)")
 	}
 
-	// GetStatus again should return same counts (not incremented)
 	status2 := limiter.GetStatus(context.Background(), "token", "client-123", "192.168.1.1")
 	if status2.ClientCount != 5 {
 		t.Errorf("Second GetStatus ClientCount = %d, want 5", status2.ClientCount)
@@ -283,13 +287,14 @@ func TestDualLayerRateLimiter_IsEnabled(t *testing.T) {
 	disabledConfig := &DualLayerConfig{Enabled: false}
 
 	baseLimiter := NewRateLimiter()
+	defer baseLimiter.Stop()
 
-	enabledLimiter := NewDualLayerRateLimiter(baseLimiter, enabledConfig, "oauth")
+	enabledLimiter := NewDualLayerRateLimiter(baseLimiter, enabledConfig, "oauth", testNopLogger())
 	if !enabledLimiter.IsEnabled() {
 		t.Error("Expected IsEnabled() = true")
 	}
 
-	disabledLimiter := NewDualLayerRateLimiter(baseLimiter, disabledConfig, "oauth")
+	disabledLimiter := NewDualLayerRateLimiter(baseLimiter, disabledConfig, "oauth", testNopLogger())
 	if disabledLimiter.IsEnabled() {
 		t.Error("Expected IsEnabled() = false")
 	}
@@ -305,24 +310,160 @@ func TestDualLayerRateLimiter_DifferentPrefixes(t *testing.T) {
 	}
 
 	baseLimiter := NewRateLimiter()
-	oauthLimiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth")
-	bffLimiter := NewDualLayerRateLimiter(baseLimiter, config, "bff")
+	defer baseLimiter.Stop()
+	oauthLimiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth", testNopLogger())
+	bffLimiter := NewDualLayerRateLimiter(baseLimiter, config, "bff", testNopLogger())
 
-	// Exhaust OAuth client limit
 	for i := 0; i < 2; i++ {
 		_ = oauthLimiter.Check(context.Background(), "token", "client-123", "192.168.1.1")
 	}
 
-	// OAuth should be blocked
 	err := oauthLimiter.Check(context.Background(), "token", "client-123", "192.168.1.1")
-	if !errors.Is(err, ErrRateLimitExceeded) {
+	var rateLimitErr *ErrRateLimited
+	if !errors.As(err, &rateLimitErr) {
 		t.Error("OAuth limiter should block request")
 	}
 
-	// BFF with same client_id should still work (different prefix)
 	err = bffLimiter.Check(context.Background(), "token", "client-123", "192.168.1.1")
 	if err != nil {
 		t.Errorf("BFF limiter should allow request: %v", err)
+	}
+}
+
+func TestDualLayerRateLimiter_InfraErrorPropagation(t *testing.T) {
+	config := &DualLayerConfig{
+		Enabled: true,
+		Window:  time.Minute,
+		Endpoints: map[string]EndpointLimit{
+			"token": {ClientLimit: 10, IPLimit: 20},
+		},
+	}
+
+	infraErr := &ErrInfrastructure{Cause: errors.New("redis connection refused")}
+	failingLimiter := &infraErrorLimiter{err: infraErr}
+	limiter := NewDualLayerRateLimiter(failingLimiter, config, "oauth", testNopLogger())
+
+	// Check() should propagate the infrastructure error, not wrap in *ErrRateLimited
+	err := limiter.Check(context.Background(), "token", "client-123", "192.168.1.1")
+	if err == nil {
+		t.Fatal("Expected error, got nil")
+	}
+
+	var rateLimited *ErrRateLimited
+	if errors.As(err, &rateLimited) {
+		t.Error("Infrastructure error should NOT be converted to *ErrRateLimited")
+	}
+
+	var infraErrResult *ErrInfrastructure
+	if !errors.As(err, &infraErrResult) {
+		t.Errorf("Expected *ErrInfrastructure, got %T: %v", err, err)
+	}
+
+	// CheckWithDetails should set InfraError field
+	result := limiter.CheckWithDetails(context.Background(), "token", "client-123", "192.168.1.1")
+	if result.Allowed {
+		t.Error("Should not be allowed on infrastructure error")
+	}
+	if result.InfraError == nil {
+		t.Error("InfraError should be set on infrastructure failure")
+	}
+}
+
+// infraErrorLimiter always returns an infrastructure error for testing
+type infraErrorLimiter struct {
+	err error
+}
+
+func (l *infraErrorLimiter) CheckRateLimit(_ context.Context, _ string, _ string, _ int, _ time.Duration) error {
+	return l.err
+}
+
+func (l *infraErrorLimiter) GetBucketStatus(_ context.Context, _ string, _ string) (int, int, time.Time) {
+	return 0, 0, time.Time{}
+}
+
+func TestDualLayerRateLimiter_GetConfig(t *testing.T) {
+	config := testOAuthConfig()
+	baseLimiter := NewRateLimiter()
+	defer baseLimiter.Stop()
+	limiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth", testNopLogger())
+
+	got := limiter.GetConfig()
+	if got != config {
+		t.Error("GetConfig() should return the same config pointer")
+	}
+	if !got.Enabled {
+		t.Error("Expected Enabled=true")
+	}
+	if got.Window != time.Minute {
+		t.Errorf("Expected Window=1m, got %v", got.Window)
+	}
+}
+
+func TestDualLayerRateLimiter_InfraError_IPPath(t *testing.T) {
+	// Config with no client limit, only IP limit — ensures infra error hits IP path
+	config := &DualLayerConfig{
+		Enabled: true,
+		Window:  time.Minute,
+		Endpoints: map[string]EndpointLimit{
+			"login": {ClientLimit: 0, IPLimit: 30},
+		},
+	}
+
+	infraErr := &ErrInfrastructure{Cause: errors.New("redis connection refused")}
+	failingLimiter := &infraErrorLimiter{err: infraErr}
+	limiter := NewDualLayerRateLimiter(failingLimiter, config, "bff", testNopLogger())
+
+	// Check() should propagate the infrastructure error from the IP path
+	err := limiter.Check(context.Background(), "login", "", "192.168.1.1")
+	if err == nil {
+		t.Fatal("Expected error, got nil")
+	}
+
+	var rateLimited *ErrRateLimited
+	if errors.As(err, &rateLimited) {
+		t.Error("IP infra error should NOT be converted to *ErrRateLimited")
+	}
+
+	var infraErrResult *ErrInfrastructure
+	if !errors.As(err, &infraErrResult) {
+		t.Errorf("Should be *ErrInfrastructure from IP path, got %T: %v", err, err)
+	}
+
+	// CheckWithDetails should set InfraError field and LimitType="ip"
+	result := limiter.CheckWithDetails(context.Background(), "login", "", "192.168.1.1")
+	if result.Allowed {
+		t.Error("Should not be allowed on IP infrastructure error")
+	}
+	if result.InfraError == nil {
+		t.Error("InfraError should be set on IP infrastructure failure")
+	}
+	if result.LimitType != "ip" {
+		t.Errorf("LimitType = %s, want ip", result.LimitType)
+	}
+	if result.RetryAfter != time.Minute {
+		t.Errorf("RetryAfter = %v, want 1m", result.RetryAfter)
+	}
+}
+
+func TestDualLayerRateLimiter_CheckWithDetails_Disabled(t *testing.T) {
+	config := &DualLayerConfig{Enabled: false}
+	baseLimiter := NewRateLimiter()
+	defer baseLimiter.Stop()
+	limiter := NewDualLayerRateLimiter(baseLimiter, config, "oauth", testNopLogger())
+
+	result := limiter.CheckWithDetails(context.Background(), "token", "client-123", "192.168.1.1")
+	if !result.Allowed {
+		t.Error("Disabled config should allow all requests")
+	}
+	if result.LimitType != "" {
+		t.Errorf("LimitType = %s, want empty", result.LimitType)
+	}
+	if result.RetryAfter != 0 {
+		t.Errorf("RetryAfter = %v, want 0", result.RetryAfter)
+	}
+	if result.InfraError != nil {
+		t.Errorf("InfraError should be nil, got %v", result.InfraError)
 	}
 }
 
@@ -333,13 +474,11 @@ func TestDualLayerConfig_GetEndpointLimit(t *testing.T) {
 		},
 	}
 
-	// Configured endpoint
 	limits := config.GetEndpointLimit("token")
 	if limits.ClientLimit != 60 || limits.IPLimit != 100 {
 		t.Errorf("Expected {60, 100}, got {%d, %d}", limits.ClientLimit, limits.IPLimit)
 	}
 
-	// Unconfigured endpoint returns zero limits
 	limits = config.GetEndpointLimit("unknown")
 	if limits.ClientLimit != 0 || limits.IPLimit != 0 {
 		t.Errorf("Expected {0, 0}, got {%d, %d}", limits.ClientLimit, limits.IPLimit)
