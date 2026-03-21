@@ -1,13 +1,12 @@
 module github.com/turnkeystaffing/go-ratelimiter
 
-go 1.26
+go 1.26.1
 
 require (
-	github.com/google/uuid v1.6.0
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/stretchr/testify v1.11.1
 	github.com/turnkeystaffing/go-health v0.1.1
-	github.com/turnkeystaffing/go-redis v0.2.0
+	github.com/turnkeystaffing/go-redis v0.1.0
 )
 
 require (
