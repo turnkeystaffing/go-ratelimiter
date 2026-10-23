@@ -17,11 +17,12 @@ type RateLimiterInterface interface {
 
 // Ensure implementations satisfy the interface
 var (
-	_ RateLimiterInterface       = (*RateLimiter)(nil)
-	_ RateLimiterInterface       = (*RedisRateLimiter)(nil)
-	_ RateLimiterInterface       = (*NoopRateLimiter)(nil)
-	_ RateLimiterInterface       = (*FallbackRateLimiter)(nil)
-	_ FailureTrackerInterface    = (*FailureTracker)(nil)
-	_ CooldownCheckerInterface   = (*CooldownChecker)(nil)
-	_ MultiCheckLimiterInterface = (*MultiCheckLimiter)(nil)
+	_ RateLimiterInterface        = (*RateLimiter)(nil)
+	_ RateLimiterInterface        = (*RedisRateLimiter)(nil)
+	_ RateLimiterInterface        = (*NoopRateLimiter)(nil)
+	_ RateLimiterInterface        = (*FallbackRateLimiter)(nil)
+	_ FailureTrackerInterface     = (*FailureTracker)(nil)
+	_ CooldownCheckerInterface    = (*CooldownChecker)(nil)
+	_ CooldownControllerInterface = (*CooldownChecker)(nil)
+	_ MultiCheckLimiterInterface  = (*MultiCheckLimiter)(nil)
 )

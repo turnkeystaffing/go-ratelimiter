@@ -307,3 +307,140 @@ func TestNewCooldownChecker_PanicsOnNilLogger(t *testing.T) {
 		NewCooldownChecker(newTestCooldownClient(), nil)
 	})
 }
+
+// setDelClient records the Set and Del calls made by CooldownChecker.Set and Release.
+type setDelClient struct {
+	testCooldownClient
+	setKey        string
+	setExpiration time.Duration
+	setErr        error
+	delKeys       []string
+	delErr        error
+}
+
+func (c *setDelClient) Set(_ context.Context, key string, _ interface{}, expiration time.Duration) error {
+	c.setKey = key
+	c.setExpiration = expiration
+	return c.setErr
+}
+
+func (c *setDelClient) Del(_ context.Context, keys ...string) (int64, error) {
+	c.delKeys = append(c.delKeys, keys...)
+	if c.delErr != nil {
+		return 0, c.delErr
+	}
+	return int64(len(keys)), nil
+}
+
+// --- Set tests ---
+
+func TestCooldownChecker_Set_WritesUnconditionallyWithCooldownTTL(t *testing.T) {
+	// Set must overwrite (plain SET EX, no NX) so an action can restart an active window;
+	// it must hit the same key CheckAndSet reads, or the restart would be invisible to it.
+	client := &setDelClient{testCooldownClient: *newTestCooldownClient()}
+	checker := NewCooldownChecker(client, testNopLogger())
+
+	err := checker.Set(context.Background(), "user:123", "2fa_setup_login_email", 15*time.Minute)
+
+	require.NoError(t, err)
+	assert.Equal(t, "rate_limit:user%3A123:cd_2fa_setup_login_email:cooldown", client.setKey)
+	assert.Equal(t, 15*time.Minute, client.setExpiration)
+}
+
+func TestCooldownChecker_Set_RedisError_Returned(t *testing.T) {
+	client := &setDelClient{testCooldownClient: *newTestCooldownClient(), setErr: assert.AnError}
+	checker := NewCooldownChecker(client, testNopLogger())
+
+	err := checker.Set(context.Background(), "user-123", "action", time.Minute)
+
+	assert.ErrorIs(t, err, assert.AnError)
+}
+
+func TestCooldownChecker_Set_NonPositiveCooldown_ReturnsError(t *testing.T) {
+	client := &setDelClient{testCooldownClient: *newTestCooldownClient()}
+	checker := NewCooldownChecker(client, testNopLogger())
+
+	assert.ErrorIs(t, checker.Set(context.Background(), "user-123", "action", 0), ErrInvalidCooldown)
+	assert.ErrorIs(t, checker.Set(context.Background(), "user-123", "action", -time.Second), ErrInvalidCooldown)
+	assert.Empty(t, client.setKey, "nothing may be written for an invalid cooldown")
+}
+
+// --- Release tests ---
+
+func TestCooldownChecker_Release_DeletesTheCheckAndSetKey(t *testing.T) {
+	// Release must free exactly the key CheckAndSet and Set use, so a failed action
+	// doesn't leave the identity blocked for the whole window.
+	client := &setDelClient{testCooldownClient: *newTestCooldownClient()}
+	checker := NewCooldownChecker(client, testNopLogger())
+
+	err := checker.Release(context.Background(), "user:123", "2fa_setup_login_email")
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"rate_limit:user%3A123:cd_2fa_setup_login_email:cooldown"}, client.delKeys)
+}
+
+func TestCooldownChecker_Release_RedisError_Returned(t *testing.T) {
+	client := &setDelClient{testCooldownClient: *newTestCooldownClient(), delErr: assert.AnError}
+	checker := NewCooldownChecker(client, testNopLogger())
+
+	assert.ErrorIs(t, checker.Release(context.Background(), "user-123", "action"), assert.AnError)
+}
+
+// memCooldownClient is an in-memory RedisClient holding key -> remaining TTL (no clock),
+// so tests can check how CheckAndSet, Set and Release act on the same key together.
+type memCooldownClient struct {
+	redisclient.RedisClient
+	ttl map[string]time.Duration
+}
+
+func newMemCooldownClient() *memCooldownClient {
+	return &memCooldownClient{RedisClient: redisclient.NewMockRedisClient(), ttl: map[string]time.Duration{}}
+}
+
+func (c *memCooldownClient) SetNX(_ context.Context, key string, _ interface{}, expiration time.Duration) (bool, error) {
+	if _, ok := c.ttl[key]; ok {
+		return false, nil
+	}
+	c.ttl[key] = expiration
+	return true, nil
+}
+
+func (c *memCooldownClient) Set(_ context.Context, key string, _ interface{}, expiration time.Duration) error {
+	c.ttl[key] = expiration
+	return nil
+}
+
+func (c *memCooldownClient) TTL(_ context.Context, key string) (time.Duration, error) {
+	return c.ttl[key], nil
+}
+
+func (c *memCooldownClient) Del(_ context.Context, keys ...string) (int64, error) {
+	for _, k := range keys {
+		delete(c.ttl, k)
+	}
+	return int64(len(keys)), nil
+}
+
+func TestCooldownChecker_SetRestartsActiveWindow_ReleaseEndsIt(t *testing.T) {
+	// The point of Set: an action inside an active window restarts it for the full new
+	// duration, so CheckAndSet stays blocked that long. The point of Release: the window ends now.
+	checker := NewCooldownChecker(newMemCooldownClient(), testNopLogger())
+	ctx := context.Background()
+
+	first, err := checker.CheckAndSet(ctx, "user-123", "action", time.Minute)
+	require.NoError(t, err)
+	require.False(t, first.Blocked)
+
+	require.NoError(t, checker.Set(ctx, "user-123", "action", 10*time.Minute))
+
+	blocked, err := checker.CheckAndSet(ctx, "user-123", "action", time.Minute)
+	require.NoError(t, err)
+	assert.True(t, blocked.Blocked)
+	assert.Equal(t, 10*time.Minute, blocked.RetryAfter, "the window must run for the duration Set gave it")
+
+	require.NoError(t, checker.Release(ctx, "user-123", "action"))
+
+	again, err := checker.CheckAndSet(ctx, "user-123", "action", time.Minute)
+	require.NoError(t, err)
+	assert.False(t, again.Blocked, "after Release the action must be allowed again")
+}

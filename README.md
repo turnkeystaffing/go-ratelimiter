@@ -130,6 +130,13 @@ if result.Blocked {
 }
 ```
 
+`CooldownControllerInterface` adds explicit control: `Set` starts or restarts the window unconditionally (`SET EX`), and `Release` ends it (`DEL`), e.g. when the throttled action failed.
+
+```go
+_ = cc.Set(ctx, "user-123", "password_change", 5*time.Minute) // restart the window
+_ = cc.Release(ctx, "user-123", "password_change")            // the action failed: unblock
+```
+
 ## Error Handling
 
 All rate limit operations return typed errors for precise handling:
