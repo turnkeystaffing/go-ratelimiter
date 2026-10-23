@@ -307,3 +307,81 @@ func TestNewCooldownChecker_PanicsOnNilLogger(t *testing.T) {
 		NewCooldownChecker(newTestCooldownClient(), nil)
 	})
 }
+
+// setDelClient records the Set and Del calls made by CooldownChecker.Set and Release.
+type setDelClient struct {
+	testCooldownClient
+	setKey        string
+	setExpiration time.Duration
+	setErr        error
+	delKeys       []string
+	delErr        error
+}
+
+func (c *setDelClient) Set(_ context.Context, key string, _ interface{}, expiration time.Duration) error {
+	c.setKey = key
+	c.setExpiration = expiration
+	return c.setErr
+}
+
+func (c *setDelClient) Del(_ context.Context, keys ...string) (int64, error) {
+	c.delKeys = append(c.delKeys, keys...)
+	if c.delErr != nil {
+		return 0, c.delErr
+	}
+	return int64(len(keys)), nil
+}
+
+// --- Set tests ---
+
+func TestCooldownChecker_Set_WritesUnconditionallyWithCooldownTTL(t *testing.T) {
+	// Set must overwrite (plain SET EX, no NX) so an action can restart an active window;
+	// it must hit the same key CheckAndSet reads, or the restart would be invisible to it.
+	client := &setDelClient{testCooldownClient: *newTestCooldownClient()}
+	checker := NewCooldownChecker(client, testNopLogger())
+
+	err := checker.Set(context.Background(), "user:123", "2fa_setup_login_email", 15*time.Minute)
+
+	require.NoError(t, err)
+	assert.Equal(t, "rate_limit:user%3A123:cd_2fa_setup_login_email:cooldown", client.setKey)
+	assert.Equal(t, 15*time.Minute, client.setExpiration)
+}
+
+func TestCooldownChecker_Set_RedisError_Returned(t *testing.T) {
+	client := &setDelClient{testCooldownClient: *newTestCooldownClient(), setErr: assert.AnError}
+	checker := NewCooldownChecker(client, testNopLogger())
+
+	err := checker.Set(context.Background(), "user-123", "action", time.Minute)
+
+	assert.ErrorIs(t, err, assert.AnError)
+}
+
+func TestCooldownChecker_Set_NonPositiveCooldown_ReturnsError(t *testing.T) {
+	client := &setDelClient{testCooldownClient: *newTestCooldownClient()}
+	checker := NewCooldownChecker(client, testNopLogger())
+
+	assert.ErrorIs(t, checker.Set(context.Background(), "user-123", "action", 0), ErrInvalidCooldown)
+	assert.ErrorIs(t, checker.Set(context.Background(), "user-123", "action", -time.Second), ErrInvalidCooldown)
+	assert.Empty(t, client.setKey, "nothing may be written for an invalid cooldown")
+}
+
+// --- Release tests ---
+
+func TestCooldownChecker_Release_DeletesTheCheckAndSetKey(t *testing.T) {
+	// Release must free exactly the key CheckAndSet and Set use, so a failed action
+	// doesn't leave the identity blocked for the whole window.
+	client := &setDelClient{testCooldownClient: *newTestCooldownClient()}
+	checker := NewCooldownChecker(client, testNopLogger())
+
+	err := checker.Release(context.Background(), "user:123", "2fa_setup_login_email")
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"rate_limit:user%3A123:cd_2fa_setup_login_email:cooldown"}, client.delKeys)
+}
+
+func TestCooldownChecker_Release_RedisError_Returned(t *testing.T) {
+	client := &setDelClient{testCooldownClient: *newTestCooldownClient(), delErr: assert.AnError}
+	checker := NewCooldownChecker(client, testNopLogger())
+
+	assert.ErrorIs(t, checker.Release(context.Background(), "user-123", "action"), assert.AnError)
+}
