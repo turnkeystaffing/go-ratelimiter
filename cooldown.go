@@ -108,6 +108,10 @@ func (c *CooldownChecker) Set(ctx context.Context, key, action string, cooldown 
 		return ErrInvalidCooldown
 	}
 	if err := c.client.Set(ctx, cooldownKey(key, action), "1", cooldown); err != nil {
+		c.logger.WarnContext(ctx, "cooldown set failed",
+			"error_type", fmt.Sprintf("%T", err),
+			"action", action,
+		)
 		return fmt.Errorf("cooldown set failed: %w", err)
 	}
 	return nil
@@ -116,6 +120,10 @@ func (c *CooldownChecker) Set(ctx context.Context, key, action string, cooldown 
 // Release ends the cooldown for key/action now (DEL). Releasing a key that isn't set is not an error.
 func (c *CooldownChecker) Release(ctx context.Context, key, action string) error {
 	if _, err := c.client.Del(ctx, cooldownKey(key, action)); err != nil {
+		c.logger.WarnContext(ctx, "cooldown release failed",
+			"error_type", fmt.Sprintf("%T", err),
+			"action", action,
+		)
 		return fmt.Errorf("cooldown release failed: %w", err)
 	}
 	return nil

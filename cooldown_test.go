@@ -385,3 +385,62 @@ func TestCooldownChecker_Release_RedisError_Returned(t *testing.T) {
 
 	assert.ErrorIs(t, checker.Release(context.Background(), "user-123", "action"), assert.AnError)
 }
+
+// memCooldownClient is an in-memory RedisClient holding key -> remaining TTL (no clock),
+// so tests can check how CheckAndSet, Set and Release act on the same key together.
+type memCooldownClient struct {
+	redisclient.RedisClient
+	ttl map[string]time.Duration
+}
+
+func newMemCooldownClient() *memCooldownClient {
+	return &memCooldownClient{RedisClient: redisclient.NewMockRedisClient(), ttl: map[string]time.Duration{}}
+}
+
+func (c *memCooldownClient) SetNX(_ context.Context, key string, _ interface{}, expiration time.Duration) (bool, error) {
+	if _, ok := c.ttl[key]; ok {
+		return false, nil
+	}
+	c.ttl[key] = expiration
+	return true, nil
+}
+
+func (c *memCooldownClient) Set(_ context.Context, key string, _ interface{}, expiration time.Duration) error {
+	c.ttl[key] = expiration
+	return nil
+}
+
+func (c *memCooldownClient) TTL(_ context.Context, key string) (time.Duration, error) {
+	return c.ttl[key], nil
+}
+
+func (c *memCooldownClient) Del(_ context.Context, keys ...string) (int64, error) {
+	for _, k := range keys {
+		delete(c.ttl, k)
+	}
+	return int64(len(keys)), nil
+}
+
+func TestCooldownChecker_SetRestartsActiveWindow_ReleaseEndsIt(t *testing.T) {
+	// The point of Set: an action inside an active window restarts it for the full new
+	// duration, so CheckAndSet stays blocked that long. The point of Release: the window ends now.
+	checker := NewCooldownChecker(newMemCooldownClient(), testNopLogger())
+	ctx := context.Background()
+
+	first, err := checker.CheckAndSet(ctx, "user-123", "action", time.Minute)
+	require.NoError(t, err)
+	require.False(t, first.Blocked)
+
+	require.NoError(t, checker.Set(ctx, "user-123", "action", 10*time.Minute))
+
+	blocked, err := checker.CheckAndSet(ctx, "user-123", "action", time.Minute)
+	require.NoError(t, err)
+	assert.True(t, blocked.Blocked)
+	assert.Equal(t, 10*time.Minute, blocked.RetryAfter, "the window must run for the duration Set gave it")
+
+	require.NoError(t, checker.Release(ctx, "user-123", "action"))
+
+	again, err := checker.CheckAndSet(ctx, "user-123", "action", time.Minute)
+	require.NoError(t, err)
+	assert.False(t, again.Blocked, "after Release the action must be allowed again")
+}
